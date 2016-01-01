@@ -3,10 +3,15 @@
 // science data (including IMU data) and nav commands
 // on Serial3 (hard wired), and execute navigation code
 // (machine learning algorithms) to "predict" location
-// using GPS location as training data.
+// using GPS location as training data. (NOTE: probably won't
+// have the memory to do on-board machine learning.)
 //
 // Philip R. Moyer
 // November 2015
+//
+// Version 03 - working - added data logger
+// Version 04 - WIP - adding drivetrain calculations - distance and heading changes
+//            based on power settings, time applied, and drivetrain parameters
 
 // Preprocessor directives
 
@@ -19,6 +24,13 @@
 
 const bool debug = false;   // Whether or not to be verbose on Serial
 const int chipSelect = 53;  // Data logger chip select pin
+// The following drivetrain parameters will need to be changed when actual
+// drivetrain is constructed.
+const float wheelCircum = 5.5;  // Wheel circumference in centimeters
+const float loadedRPM = 8.824;  // Loaded RPM at full power
+const int maxPWM = 4096;      // Maximum PWM value
+const float axleWidth = 18.0; // Axle width in centimeters
+// END DRIVETRAIN PARAMETERS
 
 // Global variables
 
@@ -31,6 +43,34 @@ SdFile root;                  // Root of filesystem on data logger SD card
 File fileHandle;              // Generic file object for data files on the SD card
 
 // Functions
+
+float power2rpm(float power)
+{
+  // Converts a power setting to an actual RPM of the wheels given
+  // drivetrain parameters.
+  // Note: assumes linear relationship between power and output RPM
+  // y = ax + b
+  // rpm = a*power + 0 <- line crosses the origin
+  float a = ((float)(loadedRPM * 2.0))/(((float)(maxPWM)) * 2.0);  // Slope of linear relationship
+  // Negatiive power indicates "reverse", PWM runs from -maxPWM to maxPWM
+  return (float)(a*power);     // Actual loaded RPM for a given power setting
+}
+
+float lengthOfTravel(float power, float secondsOn)
+{
+  // Takes power and number of seconds power was applied, uses power2rpm() and
+  // drivetrain constants, and returns the length of the wheel travel in centimeters.
+  // Note: will need to be calculated separately for port and starboard side wheels,
+  // since differential power applicatin is how the rover turns. Full forward on one
+  // side and full reverse on the other side will cause the rover to spin around its
+  // center of mass (which should be close to the geometric center of the chassis).
+
+  float curRPM = power2rpm(power);    // Convert a power setting to current RPMs
+  float curRPS = curRPM / 60.0;       // Calculate revolutions per second
+  float curRevs = curRPS * secondsOn; // Calculate number of revolutions
+  return (curRevs * wheelCircum);     // Return distance traveled, which is num of revolutions
+                                      // times the circumference of the wheels
+}
 
 void printRoverScienceData()
 {
@@ -234,6 +274,22 @@ void loop() {
     {
       printRoverScienceData();
     }
+    // Send GPS location data to Arduino A for transmission home.
+    Serial.println("# CPU B - Sending GPS data to Arduino A on Serial3.");
+    Serial3.print(roverData.getGPSyear()); Serial3.print("-");
+    Serial3.print(roverData.getGPSmonth()); Serial3.print("-");
+    Serial3.print(roverData.getGPSday()); Serial3.print(" ");
+    Serial3.print(roverData.getGPShours()); Serial3.print(":");
+    Serial3.print(roverData.getGPSminutes()); Serial3.print(":");
+    Serial3.print(roverData.getGPSseconds()); Serial3.print("\t");
+    Serial3.print(roverData.getGPSlat()); Serial3.print("\t");
+    Serial3.print(roverData.getGPSlong()); Serial3.print("\t");
+    Serial3.print(roverData.getGPSalt()); Serial3.print("\t");
+    Serial3.print(roverData.getGPSspeed()); Serial3.print("\t");
+    Serial3.print(roverData.getGPSheading()); Serial3.print("\t");
+    Serial3.println(roverData.getGPSsats()); Serial3.flush();
+    // Don't bother waiting for an acknowledgement
+    
     changedFlag = true;
   }
 
