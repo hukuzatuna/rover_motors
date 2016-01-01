@@ -25,6 +25,10 @@ const int chipSelect = 53;  // Data logger chip select pin
 char dataBuffer[255];         // Serial read data buffer
 Rover_data roverData;         // Rover class objects
 TinyGPSPlus gps;              // GPS device
+Sd2Card card;                 // SD card data object
+SdVolume volume;              // Volume on SD card
+SdFile root;                  // Root of filesystem on data logger SD card
+File fileHandle;              // Generic file object for data files on the SD card
 
 // Functions
 
@@ -82,6 +86,78 @@ void setup() {
   Serial.println("# CPU B Listening for data and commannds from Arduino A on Serial3.");
   Serial2.begin(9600);  // GPS serial interface
   Serial.println("# CPU B Listening for GPS on Serial2.");
+
+  Serial.println("# CPU B Initializing SD card...");
+
+  // we'll use the initialization code from the utility libraries
+  // since we're just testing if the card is working!
+  if (!card.init(SPI_HALF_SPEED, chipSelect)) {
+    Serial.println("# CPU B initialization failed. Things to check:");
+    Serial.println("# CPU B * is a card inserted?");
+    Serial.println("# CPU B * is your wiring correct?");
+    Serial.println("# CPU B * did you change the chipSelect pin to match your shield or module?");
+    return;
+  } else {
+    Serial.println("# CPU B Wiring is correct and a card is present.");
+  }
+
+  // print the type of card
+  Serial.print("\n# CPU B Card type: ");
+  switch (card.type()) {
+    case SD_CARD_TYPE_SD1:
+      Serial.println("SD1");
+      break;
+    case SD_CARD_TYPE_SD2:
+      Serial.println("SD2");
+      break;
+    case SD_CARD_TYPE_SDHC:
+      Serial.println("SDHC");
+      break;
+    default:
+      Serial.println("Unknown");
+  }
+
+  // Now we will try to open the 'volume'/'partition' - it should be FAT16 or FAT32
+  if (!volume.init(card)) {
+    Serial.println("# CPU B Could not find FAT16/FAT32 partition.\n# CPU B Make sure you've formatted the card");
+    return;
+  }
+
+
+  // print the type and size of the first FAT-type volume
+  uint32_t volumesize;
+  Serial.print("\n# CPU B Volume type is FAT");
+  Serial.println(volume.fatType(), DEC);
+  Serial.println();
+
+  volumesize = volume.blocksPerCluster();    // clusters are collections of blocks
+  volumesize *= volume.clusterCount();       // we'll have a lot of clusters
+  volumesize *= 512;                            // SD card blocks are always 512 bytes
+  Serial.print("# CPU B Volume size (bytes): ");
+  Serial.println(volumesize);
+  Serial.print("# CPU B Volume size (Kbytes): ");
+  volumesize /= 1024;
+  Serial.println(volumesize);
+  Serial.print("# CPU B Volume size (Mbytes): ");
+  volumesize /= 1024;
+  Serial.println(volumesize);
+
+
+  Serial.println("\n# CPU B Files found on the card (name, date and size in bytes): ");
+  root.openRoot(volume);
+
+  // list all files in the card with date and size
+  root.ls(LS_R | LS_DATE | LS_SIZE);
+
+  // Initialize the SD card for writing and reading
+  if (!SD.begin(chipSelect))
+  {
+    Serial.println("# CPU B SD card initialization failed.");
+  }
+  else
+  {
+    Serial.println("# CPU B data logger SD card ready.");
+  }
 }
 
 
@@ -162,18 +238,97 @@ void loop() {
   }
 
   // Write data to SD card:
-  if (changedFlag)
+  if (changedFlag && (0 < roverData.getGPSmonth()))
   {
     if (debug)
     {
       Serial.println("# CPU B updating data files on SD card");
     }
-    // File "science" contians all science data with timestamp
-    // File "train_x" contains timestamp and IMU data, wheel radius, rpm of loaded motors, time since last data write or motor change
-    // File "train_y" contains timestamp and GPS lat, long, alt, speed, heading
-    // File "location_a" contains the location relative to the start based on train_x data and movmement algorithms
-    // File "predict_train" contains the AI location prediction based on training data
-    // File "location_predict" contains the AI location prediction based on live data, relative to start location
+    // NOTE: the SD library only supports one data file to be opened at a time, for either reading or writing.
+    // Need to figure out how to append to an existing file....
+    // 
+    // File "science.csv" contians all science data with timestamp, including IMU data
+
+    fileHandle = SD.open("science.tsv", FILE_WRITE);
+    if (fileHandle)
+    {
+      // Get GPS timestamp and use it for these data
+      fileHandle.print(roverData.getGPSyear()); fileHandle.print("-"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSmonth()); fileHandle.print("-"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSday()); fileHandle.print(" "); fileHandle.flush();
+      fileHandle.print(roverData.getGPShours()); fileHandle.print(":"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSminutes()); fileHandle.print(":");  fileHandle.flush();
+      fileHandle.print(roverData.getGPSseconds()); fileHandle.flush();
+      fileHandle.print("\t"); fileHandle.flush();
+      
+      // Accelerometer
+      fileHandle.print(roverData.getAccelX()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getAccelY()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getAccelZ()); fileHandle.print("\t"); fileHandle.flush();
+  
+      // Gyroscope
+      fileHandle.print(roverData.getGyroX()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getGyroY()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getGyroZ()); fileHandle.print("\t"); fileHandle.flush();
+  
+      // Magnetometer
+      fileHandle.print(roverData.getMagX()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getMagY()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getMagZ()); fileHandle.print("\t"); fileHandle.flush();
+  
+      // Atomic values
+      fileHandle.print(roverData.getTempA()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getTempB()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getTempC()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getLight()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getLightVisible()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getLightIR()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getLightUV()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getLightUVindex()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getRH()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.println(roverData.getPressure());  fileHandle.flush();
+      fileHandle.close();
+    }
+    else
+    {
+      Serial.println("# CPU B Error writing science data to data logger SD card");
+    }
+    
+    // File "gps.csv" contains timestamp and GPS lat, long, alt, speed, heading
+
+    fileHandle = SD.open("gps.tsv", FILE_WRITE);
+    if (fileHandle)
+    {
+      // GPS
+      // Get GPS timestamp and use it for these data
+      fileHandle.print(roverData.getGPSyear()); fileHandle.print("-"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSmonth()); fileHandle.print("-"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSday()); fileHandle.print(" "); fileHandle.flush();
+      fileHandle.print(roverData.getGPShours()); fileHandle.print(":"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSminutes()); fileHandle.print(":");  fileHandle.flush();
+      fileHandle.print(roverData.getGPSseconds()); fileHandle.flush();
+      fileHandle.print("\t"); fileHandle.flush();
+      // data
+      fileHandle.print(roverData.getGPSlat()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSlong()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSalt()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSspeed()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSheading()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.print(roverData.getGPSfix()); fileHandle.print("\t"); fileHandle.flush();
+      fileHandle.println(roverData.getGPSsats()); fileHandle.flush();
+      fileHandle.close();
+    }
+    else
+    {
+      Serial.println("# CPU B Error writing GPS data to data logger SD card");
+    }
+    
+    // File "drivetrain.csv" contains data about the rover's power levels to motors, calculated wheel rotation, and time intervals
+    // File "location.csv" contains the location relative to the start based on science (IMU) data and movmement algorithms 
+    //      - brute force estimate of location
+    // File "predict.csv" contains the AI location prediction based on training data
+    // File "location_predict.csv" contains the AI location prediction based on live data, relative to start location
+    
   }
 }
 
