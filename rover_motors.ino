@@ -1,4 +1,5 @@
 
+//------------------------------------------------------------------------------------
 // rover_motors - drive the rover motors, accept
 // science data (including IMU data) and nav commands
 // on Serial3 (hard wired), and execute navigation code
@@ -12,8 +13,12 @@
 // Version 03 - working - added data logger
 // Version 04 - WIP - adding drivetrain calculations - distance and heading changes
 //            based on power settings, time applied, and drivetrain parameters
+//------------------------------------------------------------------------------------
 
-// Preprocessor directives
+
+//------------------------------------------------------------------------------------
+// Preprocessor directives, constants, and globals
+//------------------------------------------------------------------------------------
 
 #include <SPI.h>            // SPI library to support data logger
 #include <SD.h>             // SD card data logger library
@@ -24,6 +29,8 @@
 
 const bool debug = false;   // Whether or not to be verbose on Serial
 const int chipSelect = 53;  // Data logger chip select pin
+
+// DRIVETRAIN PARAMETERS
 // The following drivetrain parameters will need to be changed when actual
 // drivetrain is constructed.
 const float wheelCircum = 5.5;  // Wheel circumference in centimeters
@@ -42,14 +49,15 @@ SdVolume volume;              // Volume on SD card
 SdFile root;                  // Root of filesystem on data logger SD card
 File fileHandle;              // Generic file object for data files on the SD card
 
+//------------------------------------------------------------------------------------
 // Functions
+//------------------------------------------------------------------------------------
 
 float power2rpm(float power)
 {
   // Converts a power setting to an actual RPM of the wheels given
   // drivetrain parameters.
   // Note: assumes linear relationship between power and output RPM
-  // y = ax + b
   // rpm = a*power + 0 <- line crosses the origin
   float a = ((float)(loadedRPM * 2.0))/(((float)(maxPWM)) * 2.0);  // Slope of linear relationship
   // Negatiive power indicates "reverse", PWM runs from -maxPWM to maxPWM
@@ -61,7 +69,7 @@ float lengthOfTravel(float power, float secondsOn)
   // Takes power and number of seconds power was applied, uses power2rpm() and
   // drivetrain constants, and returns the length of the wheel travel in centimeters.
   // Note: will need to be calculated separately for port and starboard side wheels,
-  // since differential power applicatin is how the rover turns. Full forward on one
+  // since differential power application is how the rover turns. Full forward on one
   // side and full reverse on the other side will cause the rover to spin around its
   // center of mass (which should be close to the geometric center of the chassis).
 
@@ -117,14 +125,17 @@ void printRoverScienceData()
   Serial.println("---------------------------------------------");
 }
 
-// Setup code - runs at system initialization
+//------------------------------------------------------------------------------------
+// Main, setup, and loop functions
+//------------------------------------------------------------------------------------
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
   Serial.println("# CPU B Startup sequence initiated");
   Serial3.begin(115200);
   Serial.println("# CPU B Listening for data and commannds from Arduino A on Serial3.");
-  Serial2.begin(9600);  // GPS serial interface
+  Serial2.begin(9600);  																// GPS serial interface
   Serial.println("# CPU B Listening for GPS on Serial2.");
 
   Serial.println("# CPU B Initializing SD card...");
@@ -132,7 +143,7 @@ void setup() {
   // we'll use the initialization code from the utility libraries
   // since we're just testing if the card is working!
   if (!card.init(SPI_HALF_SPEED, chipSelect)) {
-    Serial.println("# CPU B initialization failed. Things to check:");
+    Serial.println("# CPU B SD card initialization failed. Things to check:");
     Serial.println("# CPU B * is a card inserted?");
     Serial.println("# CPU B * is your wiring correct?");
     Serial.println("# CPU B * did you change the chipSelect pin to match your shield or module?");
@@ -182,7 +193,6 @@ void setup() {
   volumesize /= 1024;
   Serial.println(volumesize);
 
-
   Serial.println("\n# CPU B Files found on the card (name, date and size in bytes): ");
   root.openRoot(volume);
 
@@ -203,50 +213,59 @@ void setup() {
 
 // Loop() - runs continuously once setup() completes
 void loop() {
-  // put your main code here, to run repeatedly:
-
   bool changedFlag = false;
+	bool dataHandled = false;
   
   while (Serial3.available() > 0)
   {
     dataBuffer[0] = 0;
     Serial3.readBytesUntil('\n', dataBuffer, sizeof(dataBuffer));
-    if (0 == strncmp("COMM CHECK", dataBuffer, 10))
-    {
-      // Communications check from Arduino A
-      Serial3.println("OK");
-      Serial.println("# CPU B Communications established with CPU A");
-    }
-    else
-    {
-      if (0 == strncmp("LIDAR", dataBuffer, 5))
-      {
-        // Not sure why I'm sending the LIDAR data. This system doesn't do anything with it.
-        if (debug)
-        {
-          Serial.println("# CPU B received LIDAR data");
-        }
-      }
-      else
-      {
-        // Otherwise we have science data
-        if (debug)
-        {
-          Serial.print("# CPU B master data: ");
-          Serial.println(dataBuffer);
-        }
-        if (debug)
-        {
-          Serial.println("# CPU B storing science data in memory object");
-        }
-        roverData.parseMasterData(dataBuffer);    // Parse and store master data from Arduino A
-        changedFlag = true;
-        if (debug)
-        {
-          printRoverScienceData();
-        }
-      }
-    }
+		if ('#' == dataBuffer[0])
+		{
+			// We have a console message from Arduino A
+			Serial.println(dataBuffer);
+			dataHandled = true;
+		}
+		if (!dataHandled)
+		{
+    	if (0 == strncmp("COMM CHECK", dataBuffer, 10))
+	    {
+				// Communications check from Arduino A
+				Serial3.println("OK");
+				Serial3.flush();
+				Serial.println("# CPU B Communications established with CPU A");
+ 	   }
+ 	   else
+ 	   {
+ 	     if (0 == strncmp("LIDAR", dataBuffer, 5))
+ 	     {
+ 	       // Not sure why I'm sending the LIDAR data. This system doesn't do anything with it.
+ 	       if (debug)
+ 	       {
+ 	         Serial.println("# CPU B received LIDAR data");
+ 	       }
+ 	     }
+ 	     else
+ 	     {
+ 	       // Otherwise we have science data
+ 	       if (debug)
+ 	       {
+ 	         Serial.print("# CPU B master data: ");
+ 	         Serial.println(dataBuffer);
+ 	       }
+ 	       if (debug)
+ 	       {
+ 	         Serial.println("# CPU B storing science data in memory object");
+ 	       }
+ 	       roverData.parseMasterData(dataBuffer);    // Parse and store master data from Arduino A
+ 	       changedFlag = true;
+ 	       if (debug)
+ 	       {
+ 	         printRoverScienceData();
+ 	       }
+ 	     }
+ 	   }
+		}
   }
 
   // Read the GPS raw interface
@@ -274,22 +293,6 @@ void loop() {
     {
       printRoverScienceData();
     }
-    // Send GPS location data to Arduino A for transmission home.
-    Serial.println("# CPU B - Sending GPS data to Arduino A on Serial3.");
-    Serial3.print(roverData.getGPSyear()); Serial3.print("-");
-    Serial3.print(roverData.getGPSmonth()); Serial3.print("-");
-    Serial3.print(roverData.getGPSday()); Serial3.print(" ");
-    Serial3.print(roverData.getGPShours()); Serial3.print(":");
-    Serial3.print(roverData.getGPSminutes()); Serial3.print(":");
-    Serial3.print(roverData.getGPSseconds()); Serial3.print("\t");
-    Serial3.print(roverData.getGPSlat()); Serial3.print("\t");
-    Serial3.print(roverData.getGPSlong()); Serial3.print("\t");
-    Serial3.print(roverData.getGPSalt()); Serial3.print("\t");
-    Serial3.print(roverData.getGPSspeed()); Serial3.print("\t");
-    Serial3.print(roverData.getGPSheading()); Serial3.print("\t");
-    Serial3.println(roverData.getGPSsats()); Serial3.flush();
-    // Don't bother waiting for an acknowledgement
-    
     changedFlag = true;
   }
 
@@ -301,7 +304,7 @@ void loop() {
       Serial.println("# CPU B updating data files on SD card");
     }
     // NOTE: the SD library only supports one data file to be opened at a time, for either reading or writing.
-    // Need to figure out how to append to an existing file....
+    // Need to figure out how to append to an existing file.... (This happens by default. -PRM)
     // 
     // File "science.csv" contians all science data with timestamp, including IMU data
 
@@ -379,11 +382,10 @@ void loop() {
       Serial.println("# CPU B Error writing GPS data to data logger SD card");
     }
     
+		// STILL TO BE WRITTEN. -PRM
     // File "drivetrain.csv" contains data about the rover's power levels to motors, calculated wheel rotation, and time intervals
     // File "location.csv" contains the location relative to the start based on science (IMU) data and movmement algorithms 
     //      - brute force estimate of location
-    // File "predict.csv" contains the AI location prediction based on training data
-    // File "location_predict.csv" contains the AI location prediction based on live data, relative to start location
     
   }
 }
